@@ -58,9 +58,9 @@ class Bottleneck(nn.Module):
         return out
 
 
-class ResNet(nn.Module):
+class SquiggleNet(nn.Module):
     def __init__(self, block, layers):
-        super(ResNet, self).__init__()
+        super(SquiggleNet, self).__init__()
         self.chan1 = 20
 
         # first block

@@ -11,7 +11,8 @@ import time
 import torch
 
 from dataloader import CustomDataLoader
-from model import Bottleneck, ResNet
+from src.SquiggleNetModel import Bottleneck, SquiggleNet
+from src.DeepSelectNetModel import DSBottleneck, DeepSelectNet
 from numpy import random
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, confusion_matrix, f1_score, precision_score, recall_score
 from torch import nn
@@ -95,8 +96,9 @@ def update_stopping_criterion(current_loss, last_loss, trigger_times):
 @click.option('--n_epochs', '-e', default=5, help='number of epochs, default 5')
 @click.option('--learning_rate', '-l', default=1e-3, help='learning rate, default 1e-3')
 @click.option('--random_seed', '-s', default=42, help='random seed for file shuffling of custom data loaders')
+@click.option('--train_model', '-m', default='SquiggleNet', help='deep learning model used for training')
 def main(p_train, p_val, p_ids, chr_train, chr_val, chr_ids, out_folder, interm, patience,
-         batch_size, n_workers, n_epochs, learning_rate, random_seed):
+         batch_size, n_workers, n_epochs, learning_rate, random_seed, train_model):
     start_time = time.time()
 
     # set device
@@ -125,7 +127,11 @@ def main(p_train, p_val, p_ids, chr_train, chr_val, chr_ids, out_folder, interm,
     print(f'Class counts for validation: {validation_generator.get_class_counts()}')
 
     # create new or load trained model
-    model = ResNet(Bottleneck, layers=[2, 2, 2, 2]).to(device)
+    if train_model == 'SquiggleNet':
+        model = SquiggleNet(Bottleneck, layers=[2, 2, 2, 2]).to(device)
+    else:
+        model = DeepSelectNet(DSBottleneck, layers=[2, 2, 2, 2]).to(device)
+        
     if interm is not None:
         model.load_state_dict(torch.load(interm))
 
