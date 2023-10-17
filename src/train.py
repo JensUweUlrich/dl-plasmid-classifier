@@ -11,8 +11,9 @@ import time
 import torch
 
 from dataloader import CustomDataLoader
-from src.SquiggleNetModel import Bottleneck, SquiggleNet
-from src.DeepSelectNetModel import DSBottleneck, DeepSelectNet
+from SquiggleNetModel import Bottleneck, SquiggleNet
+from DeepSelectNetModel import DSBottleneck, DeepSelectNet
+from MitoModel import bnLSTM, VDCNN_bnLSTM_1window, VDCNN_gru_1window_hidden, regGru_32window_hidden_BN
 from numpy import random
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, confusion_matrix, f1_score, precision_score, recall_score
 from torch import nn
@@ -96,7 +97,7 @@ def update_stopping_criterion(current_loss, last_loss, trigger_times):
 @click.option('--n_epochs', '-e', default=5, help='number of epochs, default 5')
 @click.option('--learning_rate', '-l', default=1e-3, help='learning rate, default 1e-3')
 @click.option('--random_seed', '-s', default=42, help='random seed for file shuffling of custom data loaders')
-@click.option('--train_model', '-m', default='SquiggleNet', help='deep learning model used for training')
+@click.option('--train_model', '-m', default='SquiggleNet', help='deep learning model used for training (SquiggleNet, DeepSelectNet, bnLSTM, bnGRU, vdCNN_GRU, vdCNN_bnLSTM, regGRU)')
 def main(p_train, p_val, p_ids, chr_train, chr_val, chr_ids, out_folder, interm, patience,
          batch_size, n_workers, n_epochs, learning_rate, random_seed, train_model):
     start_time = time.time()
@@ -129,9 +130,24 @@ def main(p_train, p_val, p_ids, chr_train, chr_val, chr_ids, out_folder, interm,
     # create new or load trained model
     if train_model == 'SquiggleNet':
         model = SquiggleNet(Bottleneck, layers=[2, 2, 2, 2]).to(device)
-    else:
+    elif train_model == 'DeepSelectNet':
         model = DeepSelectNet(DSBottleneck, layers=[2, 2, 2, 2]).to(device)
-        
+    elif train_model == 'bnLSTM':
+        model = bnLSTM(input_size=1, hidden_size=512, max_length=4000,  num_layers=1,
+				 use_bias=True, batch_first=True, dropout=0.5,num_classes = 2)
+    elif train_model == 'vdCNN_bnLSTM':
+        model = VDCNN_bnLSTM_1window(input_size=1, hidden_size=512, max_length=4000,  num_layers=1,
+				 use_bias=True, batch_first=True, dropout=0.5,num_classes = 2)
+    elif train_model == 'vdCNN_GRU':
+        model = VDCNN_gru_1window_hidden(input_size=1, hidden_size=512, max_length=4000,  num_layers=1,
+				 use_bias=True, batch_first=True, dropout=0.5,num_classes = 2)
+    elif train_model == 'regGRU':
+        model = regGru_32window_hidden_BN(input_size=1, hidden_size=512, max_length=4000,  num_layers=1,
+				 use_bias=True, batch_first=True, dropout=0.5,num_classes = 2)
+    else:
+        print("Wrong model definition: " + str(train_model))
+        return
+
     if interm is not None:
         model.load_state_dict(torch.load(interm))
 
@@ -163,6 +179,12 @@ def main(p_train, p_val, p_ids, chr_train, chr_val, chr_ids, out_folder, interm,
                                         'Balanced Accuracy', 'F1S', 'MCC', 'Precision', 'Recall'])
 
     for epoch in tqdm(range(n_epochs), desc='epoch'):
+
+        # Note JUU 13/10/2023
+        # This was not set in the original SquiggleNet implementation and Nina's code
+        # if not set correctly will impact BatchNorm and DropOut layers
+        model.train(True)
+
         for i, (train_data, train_labels, _) in tqdm(enumerate(training_generator), desc='train-batch'):
             train_data, train_labels = train_data.to(device), train_labels.to(torch.long).to(device)
 
@@ -182,6 +204,10 @@ def main(p_train, p_val, p_ids, chr_train, chr_val, chr_ids, out_folder, interm,
             # -> update parameters of optimizer
             optimizer.step()
 
+        # Note JUU 13/10/2023
+        # This was not set in the original SquiggleNet implementation and Nina's code
+        # if not set correctly will impact BatchNorm and DropOut layers
+        model.eval()
         # validate
         current_val_results = validate(out_folder, epoch, validation_generator, device, model, val_criterion)
         print(f'\nValidation Loss: {str(current_val_results["Validation Loss"])}, '

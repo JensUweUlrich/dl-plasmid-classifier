@@ -14,6 +14,8 @@ class CustomDataset(torch.utils.data.Dataset):
         n = torch.load(filenames[1])
         self.data = torch.cat((p, n))
 
+        print(filenames[0])
+        print(filenames[1])
         # extract number of reads per class (for labels and ID list iteration)
         self.n_pos_reads = p.shape[0]
         self.n_neg_reads = n.shape[0]
@@ -40,7 +42,7 @@ class CustomDataset(torch.utils.data.Dataset):
             read_id = self.ids[index]
             return X, y, read_id
         else:
-            return X, y, None
+            return X, y, ""
 
     def get_n_pos_reads(self):
         return self.n_pos_reads

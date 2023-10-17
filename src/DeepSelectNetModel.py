@@ -12,12 +12,12 @@ class DSBottleneck(nn.Module):
 
     def __init__(self, in_channel, out_channel, stride=1, downsample=None):
         super(DSBottleneck, self).__init__()
-        self.conv1 = nn.Conv1d(in_channel, in_channel, kernel_size=1, stride=stride, padding=0, bias=False)
+        self.conv1 = nn.Conv1d(in_channel, in_channel, kernel_size=1, stride=1, padding=0, bias=False)
         self.bn1 = nn.BatchNorm1d(in_channel)
-        self.conv2 = nn.Conv1d(in_channel, in_channel, kernel_size=3, stride=stride, padding=0, bias=False,
-                     dilation=0, groups=1)
+        self.conv2 = nn.Conv1d(in_channel, in_channel, kernel_size=3, stride=stride, padding=1, bias=False,
+                     dilation=1, groups=1)
         self.bn2 = nn.BatchNorm1d(in_channel)
-        self.conv3 = nn.Conv1d(in_channel, out_channel, kernel_size=1, stride=stride, padding=0, bias=False)
+        self.conv3 = nn.Conv1d(in_channel, out_channel, kernel_size=1, stride=1, padding=0, bias=False)
         self.bn3 = nn.BatchNorm1d(out_channel)
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
@@ -71,10 +71,10 @@ class GaussianNoise(nn.Module):
             x = x + sampled_noise
         return x 
 
-class DeepSelectNet:
+class DeepSelectNet(nn.Module):
 
     def __init__(self, block, layers):
-
+        super(DeepSelectNet, self).__init__()
         self.chan1 = 20
         # first block
         self.conv1 = nn.Conv1d(1, 20, 19, padding=5, stride=3)
@@ -82,10 +82,10 @@ class DeepSelectNet:
         self.relu = nn.ReLU(inplace=True)
         self.pool = nn.MaxPool1d(2, padding=1, stride=2)
 
-        self.dropout1 = nn.Dropout(0.1, inplace=True)
-        self.dropout2 = nn.Dropout(0.1, inplace=True)
-        self.dropout3 = nn.Dropout(0.1, inplace=True)
-        self.dropout4 = nn.Dropout(0.1, inplace=True)
+        self.dropout1 = nn.Dropout(0.1)
+        self.dropout2 = nn.Dropout(0.1)
+        self.dropout3 = nn.Dropout(0.1)
+        self.dropout4 = nn.Dropout(0.1)
 
         self.layer1 = self._make_layer(block, 20, layers[0])
         self.layer2 = self._make_layer(block, 30, layers[1], stride=2)
@@ -97,13 +97,21 @@ class DeepSelectNet:
         self.fc = nn.Linear(67, 2)
         self.sigmoid = nn.Sigmoid()
 
+        # initialization
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
 
     def _make_layer(self, block, channels, blocks, stride=1):
         downsample = None
         if stride != 1 or self.chan1 != channels:
             downsample = nn.Sequential(
                 nn.Conv1d(self.chan1, channels, kernel_size=1, stride=stride, padding=0, bias=False),
-                nn.BatchNorm1d(20)(channels),
+                nn.BatchNorm1d(channels),
             )
 
         layers = [block(self.chan1, channels, stride, downsample)]

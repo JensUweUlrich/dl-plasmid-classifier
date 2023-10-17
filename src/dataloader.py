@@ -56,9 +56,11 @@ class CustomDataLoader:
         # try to get next read in current file
         try:
             return next(self.current_file)
+            #return self.current_file
         # if file is completely processed, load next file and extract its first read
         except StopIteration:
             self.current_file = self.load_next_file()
+            #return self.current_file
             return next(self.current_file)
 
     def get_n_reads(self):
@@ -71,6 +73,8 @@ class CustomDataLoader:
         self.random_gen.shuffle(self.files)
 
     def load_next_file(self):
+        #print(str(len(self.files)) + "\n")
+        #print(str(self.current_file_idx) + "\n")
         if len(self.files) <= self.current_file_idx:
             # reset everything for next epoch
             self.current_file = None
@@ -80,10 +84,21 @@ class CustomDataLoader:
 
             raise StopIteration
 
+        #print(self.files[self.current_file_idx])
         dataset = CustomDataset(self.files[self.current_file_idx], self.pos_ids, self.current_pos_idx, self.neg_ids,
                                 self.current_neg_idx)
         self.current_pos_idx += dataset.get_n_pos_reads()
         self.current_neg_idx += dataset.get_n_neg_reads()
         self.current_file_idx += 1
+        #print(dataset.get_n_pos_reads())
+        #print(self.current_neg_idx)
 
+        #X, y,read_id = dataset.__getitem__(1)
+        #print(self.params)
+
+        #data_loader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=1, pin_memory=False)
+        #print(data_loader.__len__())
+        #for idx, d in enumerate(data_loader):
+        #    print(idx, d.__len__())
+        #return DataLoader(dataset, **self.params)
         return iter(DataLoader(dataset, **self.params))

@@ -17,14 +17,23 @@ from ont_fast5_api.fast5_interface import get_fast5_file
 from scipy import stats
 
 
-def normalize(data, consistency_correction=1.4826):
+def normalize(data, method='mad'):
     extreme_signals = list()
+    consistency_correction=1.4826
+    if method == 'oqad':
+        consistency_correction = 0.674731
 
     for r_i, read in enumerate(data):
         # normalize using z-score with median absolute deviation
         median = np.median(read)
-        mad = stats.median_abs_deviation(read, scale='normal')
-        data[r_i] = list((read - median) / (consistency_correction * mad))
+        
+        if method == 'oqad':
+            oqad = np.quantile(np.abs(read - median), 0.861678977787423)
+            data[r_i] = list((read - median) / (consistency_correction * oqad))
+        else:
+            mad = stats.median_abs_deviation(read, scale='normal')
+            data[r_i] = list((read - median) / (consistency_correction * mad))
+        
 
         # get extreme signals (modified absolute z-score larger than 3.5)
         # see Iglewicz and Hoaglin (https://hwbdocuments.env.nm.gov/Los%20Alamos%20National%20Labs/TA%2054/11587.pdf)
@@ -66,10 +75,11 @@ def save_as_tensor(data, outpath_ds, batch_idx, use_single_batch=False):
 @click.option('--max_seq_len', '-max', default=8000, help='maximum number of raw signals (after cutoff) used per read')
 @click.option('--cut_after', '-a', default=False,
               help='whether random sequence length per read of validation set is applied before or after normalization')
+@click.option('--normalization', '-n', default='mad', help='Method used for normalization of raw nanopore signals')
 @click.option('--random_seed', '-s', default=42, help='seed for random sequence length generation')
 @click.option('--batch_size', '-b', default=5000, help='amount of reads per batch, set to zero to use whole dataset size')
 def main(train_sim_neg, train_sim_pos, val_sim_neg, val_sim_pos, out_dir, cutoff,
-         min_seq_len, max_seq_len, cut_after, random_seed, batch_size):
+         min_seq_len, max_seq_len, cut_after, normalization, random_seed, batch_size):
     start_time = time.time()
     random_gen = random.default_rng(random_seed)
 
@@ -137,7 +147,7 @@ def main(train_sim_neg, train_sim_pos, val_sim_neg, val_sim_pos, out_dir, cutoff
 
                         # normalize if batch size is reached
                         if (not use_single_batch) and (batch_idx % batch_size == 0) and (batch_idx != 0):
-                            reads = normalize(reads)
+                            reads = normalize(reads, normalization)
 
                             for i in range(len(reads)):
                                 # apply random sequence length
