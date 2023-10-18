@@ -164,7 +164,7 @@ class bnLSTM(nn.Module):
 
 	# def __init__(self, cell_class, input_size, hidden_size, num_layers=1,
 	def __init__(self, input_size, hidden_size,max_length,  num_layers=1,
-				 use_bias=True, batch_first=False, dropout=0.5,num_classes = 2):
+				 use_bias=True, batch_first=False, dropout=0.5, num_classes = 1):
 		super(bnLSTM, self).__init__()
 		# self.cell_class = cell_class
 		self.real_input_size = input_size
@@ -258,7 +258,14 @@ class bnLSTM(nn.Module):
 
 		output = layer_output
 		output = output[-1]
-		output = functional.softmax(self.fc(output), dim=1)
+		
+		# Note JUU 18/10/2023
+		# Use FC Layer with only one outpute node as final Layer when using BCEWithLogitLoss
+		# Internally uses sigmoid for binary classification
+		# softmax only suitable for multi-class problems
+		#output = functional.softmax(self.fc(output), dim=1)
+		output = self.fc(output)
+
 		return output
 
 class bnLSTM_32window(nn.Module):
@@ -362,7 +369,7 @@ class VDCNN_bnLSTM_1window(nn.Module):
 
 	# def __init__(self, cell_class, input_size, hidden_size, num_layers=1,
 	def __init__(self, input_size, hidden_size,max_length,  num_layers=1,
-				 use_bias=True, batch_first=False, dropout=0.5,num_classes = 2):
+				 use_bias=True, batch_first=False, dropout=0.5, num_classes = 1):
 		super(VDCNN_bnLSTM_1window, self).__init__()
 		# self.cell_class = cell_class
 		self.VDCNN = VDCNN_withDropout_normalMaxPool_ForRNN(input_size=input_size, hidden_size=hidden_size,\
@@ -457,7 +464,13 @@ class VDCNN_bnLSTM_1window(nn.Module):
 		h_n = torch.stack(h_n, 0)
 		
 		output = h_n[0]
-		output = functional.softmax(self.fc(output), dim=1)
+
+		# Note JUU 18/10/2023
+		# Use FC Layer with only one outpute node as final Layer when using BCEWithLogitLoss
+		# Internally uses sigmoid for binary classification
+		# softmax only suitable for multi-class problems
+		#output = functional.softmax(self.fc(output), dim=1)
+		output = self.fc(output)
 		return output
 
 
@@ -571,7 +584,7 @@ class VDCNN_gru_1window_hidden(nn.Module):
 	"""A module that runs multiple steps of LSTM."""
 
 	def __init__(self, input_size, hidden_size,max_length,  num_layers=1,
-				 use_bias=True, batch_first=False, dropout=0.5,num_classes = 2):
+				 use_bias=True, batch_first=False, dropout=0.5, num_classes = 1):
 		super(VDCNN_gru_1window_hidden, self).__init__()
 		self.VDCNN = VDCNN_withDropout_normalMaxPool_ForRNN(input_size=input_size, hidden_size=hidden_size,\
 				 max_length=max_length, n_classes=2, depth=9,\
@@ -641,7 +654,12 @@ class VDCNN_gru_1window_hidden(nn.Module):
 
 		output = output2[0]
 
-		output = functional.softmax(self.fc(output), dim=1)
+		# Note JUU 18/10/2023
+		# Use FC Layer with only one outpute node as final Layer when using BCEWithLogitLoss
+		# Internally uses sigmoid for binary classification
+		# softmax only suitable for multi-class problems
+		#output = functional.softmax(self.fc(output), dim=1)
+		output = self.fc(output)
 		return output
 
 
@@ -889,7 +907,7 @@ class regGru_32window_hidden_BN(nn.Module):
 	"""A module that runs multiple steps of LSTM."""
 
 	def __init__(self, input_size, hidden_size,max_length,  num_layers=1,
-				 use_bias=True, batch_first=False, dropout=0.5,num_classes = 2, bidirectional = False):
+				 use_bias=True, batch_first=False, dropout=0.5,num_classes = 1, bidirectional = False):
 		super(regGru_32window_hidden_BN, self).__init__()
 		self.real_input_size = input_size
 		self.input_size = input_size
@@ -923,7 +941,13 @@ class regGru_32window_hidden_BN(nn.Module):
 		_ , output2= self.gru(input_)
 		output = output2
 		output = output[0]
-		output = functional.softmax(self.fc(output), dim=1)
+
+		# Note JUU 18/10/2023
+		# Use FC Layer with only one outpute node as final Layer when using BCEWithLogitLoss
+		# Internally uses sigmoid for binary classification
+		# softmax only suitable for multi-class problems
+		#output = functional.softmax(self.fc(output), dim=1)
+		output = self.fc(output)
 		return output
 
 

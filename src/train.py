@@ -36,11 +36,12 @@ def validate(out_folder, epoch, validation_generator, device, model, val_criteri
             val_iterations += 1
             val_data, val_labels = val_data.to(device), val_labels.to(torch.long).to(device)
             val_outputs = model(val_data)
-            val_loss = val_criterion(val_outputs, val_labels)
+            val_loss = val_criterion(val_outputs, val_labels.unsqueeze(1).to(torch.float))
             totals['Validation Loss'] += val_loss.item()
 
             # get and store predicted labels
-            predicted_labels = val_outputs.max(dim=1).indices.int().data.cpu().numpy()
+            #predicted_labels = val_outputs.max(dim=1).indices.int().data.cpu().numpy()
+            predicted_labels = (val_outputs >= 0.5).type(torch.long).data.cpu().numpy()
             if None not in val_ids:
                 for read_id, label_nr in zip(val_ids, predicted_labels):
                     label = 'plasmid' if label_nr == PLASMID_LABEL else 'chr'
@@ -134,16 +135,16 @@ def main(p_train, p_val, p_ids, chr_train, chr_val, chr_ids, out_folder, interm,
         model = DeepSelectNet(DSBottleneck, layers=[2, 2, 2, 2]).to(device)
     elif train_model == 'bnLSTM':
         model = bnLSTM(input_size=1, hidden_size=512, max_length=4000,  num_layers=1,
-				 use_bias=True, batch_first=True, dropout=0.5,num_classes = 2)
+				 use_bias=True, batch_first=True, dropout=0.5)
     elif train_model == 'vdCNN_bnLSTM':
         model = VDCNN_bnLSTM_1window(input_size=1, hidden_size=512, max_length=4000,  num_layers=1,
-				 use_bias=True, batch_first=True, dropout=0.5,num_classes = 2)
+				 use_bias=True, batch_first=True, dropout=0.5)
     elif train_model == 'vdCNN_GRU':
         model = VDCNN_gru_1window_hidden(input_size=1, hidden_size=512, max_length=4000,  num_layers=1,
-				 use_bias=True, batch_first=True, dropout=0.5,num_classes = 2)
+				 use_bias=True, batch_first=True, dropout=0.5)
     elif train_model == 'regGRU':
         model = regGru_32window_hidden_BN(input_size=1, hidden_size=512, max_length=4000,  num_layers=1,
-				 use_bias=True, batch_first=True, dropout=0.5,num_classes = 2)
+				 use_bias=True, batch_first=True, dropout=0.5)
     else:
         print("Wrong model definition: " + str(train_model))
         return
@@ -154,17 +155,34 @@ def main(p_train, p_val, p_ids, chr_train, chr_val, chr_ids, out_folder, interm,
     # AdamW generalizes better and trains faster, see https://towardsdatascience.com/why-adamw-matters-736223f31b5d
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
-    # use sample count per class for balancing the loss while training
+    # use sample count per class for balancing the loss while training => only for Cross Entropy Loss
     # inspired by https://scikit-learn.org/stable/modules/generated/sklearn.utils.class_weight.compute_class_weight.html
     train_class_weights = [training_generator.get_n_reads() / (2 * class_count)
                            for class_count in training_generator.get_class_counts()]
     train_class_weights = torch.as_tensor(train_class_weights, dtype=torch.float)
-    train_criterion = nn.CrossEntropyLoss(weight=train_class_weights).to(device)
+    #train_criterion = nn.CrossEntropyLoss(weight=train_class_weights).to(device)
+    
+    # Note JUU 18/10/2023
+    # Calculate only weight for the positive class (plasmid) when using BCEwithLogitsLoss
+    train_pos_weight = torch.as_tensor(training_generator.get_class_counts()[1] / (training_generator.get_class_counts()[0] + 1e-5), dtype=torch.float)
 
+    # Note JUU 17/10/2023
+    # Better use BCEWithLogitsLoss for binary classification
+    train_criterion = nn.BCEWithLogitsLoss(pos_weight=train_pos_weight).to(device)
+    
+
+    # Note JUU 18/10/2023
+    # Also for validation, better use BCEWithLogitsLoss for binary classification
+    # with single weight for the positive class (plasmid)
     val_class_weights = [validation_generator.get_n_reads() / (2 * class_count)
                          for class_count in validation_generator.get_class_counts()]
     val_class_weights = torch.as_tensor(val_class_weights, dtype=torch.float)
-    val_criterion = nn.CrossEntropyLoss(weight=val_class_weights).to(device)
+    #val_criterion = nn.CrossEntropyLoss(weight=val_class_weights).to(device)
+
+
+    val_pos_weight = torch.as_tensor(validation_generator.get_class_counts()[1] / (validation_generator.get_class_counts()[0] + 1e-5), dtype=torch.float)
+    val_criterion = nn.BCEWithLogitsLoss(pos_weight=val_pos_weight).to(device)
+   
 
     # setup best model consisting of epoch and metric (for accuracy and loss as model selection criterion)
     best_model_acc = (0, 0)
@@ -186,12 +204,15 @@ def main(p_train, p_val, p_ids, chr_train, chr_val, chr_ids, out_folder, interm,
         model.train(True)
 
         for i, (train_data, train_labels, _) in tqdm(enumerate(training_generator), desc='train-batch'):
-            train_data, train_labels = train_data.to(device), train_labels.to(torch.long).to(device)
+            train_data, train_labels = train_data.to(device), train_labels.to(torch.float).to(device)
 
             # perform forward propagation
             outputs_train = model(train_data)
-            train_loss = train_criterion(outputs_train, train_labels)
-            train_acc = (train_labels == outputs_train.max(dim=1).indices).float().mean().item()
+            train_loss = train_criterion(outputs_train, train_labels.unsqueeze(1))
+            pred_labels = (outputs_train >= 0.5).type(torch.float)
+            #print(pred_labels)
+            train_acc = (train_labels == pred_labels).float().mean().item()
+            #print(train_acc)
             train_results = pd.concat(
                 [train_results, pd.DataFrame([{'Epoch': epoch, 'Batch': i, 'Training Loss': train_loss.item(),
                                                'Training Accuracy': train_acc}])], ignore_index=True)

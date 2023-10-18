@@ -69,7 +69,11 @@ class SquiggleNet(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.pool = nn.MaxPool1d(2, padding=1, stride=2)
         self.avgpool = nn.AdaptiveAvgPool1d(1)
-        self.fc = nn.Linear(67, 2)
+        
+        # Note JUU 17/10/2023 
+        # Only one output neuron for binary classification with
+        # binary cross entropy loss function
+        self.fc = nn.Linear(67, 1)
 
         self.layer1 = self._make_layer(block, 20, layers[0])
         self.layer2 = self._make_layer(block, 30, layers[1], stride=2)

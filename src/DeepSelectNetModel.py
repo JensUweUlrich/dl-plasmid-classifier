@@ -94,8 +94,15 @@ class DeepSelectNet(nn.Module):
 
         self.avgpool = nn.AdaptiveAvgPool1d(1)
         self.noise_layer = GaussianNoise(10)
-        self.fc = nn.Linear(67, 2)
-        self.sigmoid = nn.Sigmoid()
+
+        # Note JUU 17/10/2023
+        # Only one output neuron for binary classification with
+        # binary cross entropy loss function
+        # no final sigmoid layer needed because BCEwithLogitsLoss includes sigmoid layer
+        # and is numerically more stable
+        # https://medium.com/dejunhuang/learning-day-57-practical-5-loss-function-crossentropyloss-vs-bceloss-in-pytorch-softmax-vs-bd866c8a0d23
+        self.fc = nn.Linear(67, 1)
+        #self.sigmoid = nn.Sigmoid()
 
         # initialization
         for m in self.modules():
@@ -144,7 +151,9 @@ class DeepSelectNet(nn.Module):
         x = torch.flatten(x, 1)
         x = self.noise_layer(x)
         x = self.fc(x)
-        x = self.sigmoid(x)
+
+        # see above
+        #x = self.sigmoid(x)
 
         return x
 
