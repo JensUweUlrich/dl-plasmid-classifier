@@ -5,6 +5,8 @@ This model is from the DeepSelectNet project, see https://github.com/AnjanaSenan
 import torch
 
 from torch import nn
+import lightning.pytorch as pl
+from sklearn.metrics import balanced_accuracy_score
 
 
 class DSBottleneck(nn.Module):
@@ -71,10 +73,17 @@ class GaussianNoise(nn.Module):
             x = x + sampled_noise
         return x 
 
-class DeepSelectNet(nn.Module):
+class DeepSelectNet(pl.LightningModule):
 
-    def __init__(self, block, layers):
+    def __init__(self, block, layers, learning_rate, batch_size, train_pos_weight, val_pos_weight):
         super(DeepSelectNet, self).__init__()
+        #self.save_hyperparameters()
+
+        self.lr = learning_rate
+        self.batch_size = batch_size
+        self.train_criterion = nn.BCEWithLogitsLoss(pos_weight=train_pos_weight)
+        self.val_criterion = nn.BCEWithLogitsLoss(pos_weight=val_pos_weight)
+
         self.chan1 = 20
         # first block
         self.conv1 = nn.Conv1d(1, 20, 19, padding=5, stride=3)
@@ -157,88 +166,26 @@ class DeepSelectNet(nn.Module):
 
         return x
 
-#    def conv_pass_1(self, x, n_feature_maps=20):
-#        x1 = nn.Conv1d(1, n_feature_maps, kernel_size=1, strides=1, padding=padding, bias=False,
-#                     dilation=padding, groups=groups)
-#        x1 = tf.keras.layers.Conv1D(filters=n_feature_maps, kernel_size=1, padding='causal', strides=1)(x)
-#        x1 = tf.keras.layers.BatchNormalization()(x1)
-#        x1 = tf.keras.layers.Activation('relu')(x1)
-#        return x1
+    def configure_optimizers(self):
+        return torch.optim.AdamW(self.parameters(), lr=self.lr)
+     
+    def training_step(self, train_batch, train_batch_idx):
+        data, labels, ids = train_batch
+        train_labels = labels.to(torch.float)
+        outputs_train = self.forward(data)
+        train_loss = self.train_criterion(outputs_train, labels.unsqueeze(1))
+        pred_labels = (outputs_train >= 0.5).type(torch.float)
+        train_acc = (train_labels == pred_labels).float().mean().item()
+        self.log('train_loss', train_loss, batch_size=self.batch_size, )
+        self.log('train_acc', train_acc, batch_size=self.batch_size)
+        return train_loss
 
-#    def conv_pass_2(self, x, n_feature_maps=20, strides=1):
-#        x1 = tf.keras.layers.Conv1D(filters=n_feature_maps, kernel_size=3, padding='causal', strides=strides)(x)
-#        x1 = tf.keras.layers.BatchNormalization()(x1)
-#        x1 = tf.keras.layers.Activation('relu')(x1)
-#        return x1
-
-#    def conv_pass_3(self, x, n_feature_maps=20):
-#        x1 = tf.keras.layers.Conv1D(filters=n_feature_maps, kernel_size=1, padding='causal', strides=1)(x)
-#        x1 = tf.keras.layers.BatchNormalization()(x1)
-#        x1 = tf.keras.layers.Activation('relu')(x1)
-#        return x1
-
-#    def make_layer(self, x, filters, blocks, strides=1):
-#        filter_1 = 20
-#        down_sample = None
-
-#        if strides != 1 or filter_1 != filters:
-#            down_sample = True
-
-#        x = self.conv_pass_1(x, filters)
-#        x = self.conv_pass_2(x, filters, strides=strides)
-#        x = tf.keras.layers.Conv1D(filters=filters, kernel_size=1, padding='causal', strides=1)(x)
-#        x = tf.keras.layers.BatchNormalization()(x)
-#        if down_sample:
-#            x = tf.keras.layers.Conv1D(filters=filters, kernel_size=1, strides=strides)(x)
-#            x = tf.keras.layers.BatchNormalization()(x)
-#        x = tf.keras.layers.Activation('relu')(x)
-
-#        if down_sample:
-#            filter_1 = filters
-
-#        for _ in range(1, blocks):
-#            x = self.conv_pass_1(x, filters)
-#            x = self.conv_pass_2(x, filters)
-#            x = self.conv_pass_3(x, filters)
-#        return x
-
-#    def build_model(self, input_shape, nb_classes, is_train):
-
-#        input_layer = tf.keras.layers.Input(input_shape)
-
-        # BLOCK 1
-#        x = tf.keras.layers.Conv1D(filters=20, kernel_size=19, padding='causal', strides=3)(input_layer)
-#        x = tf.keras.layers.BatchNormalization()(x)
-#        x = tf.keras.layers.Activation('relu')(x)
-#        x = tf.keras.layers.MaxPooling1D(2, padding='valid', strides=2)(x)
-
-        # LAYERS
-#        x = tf.keras.layers.Dropout(0.10)(x)
-#        x = self.make_layer(x, filters=20, blocks=2)
-#        x = tf.keras.layers.Dropout(0.10)(x)
-#        x = self.make_layer(x, filters=30, blocks=2, strides=2)
-#        x = tf.keras.layers.Dropout(0.10)(x)
-#        x = self.make_layer(x, filters=45, blocks=2, strides=2)
-#        x = tf.keras.layers.Dropout(0.10)(x)
-#        x = self.make_layer(x, filters=67, blocks=2, strides=2)
-
-        # FINAL
-#        x = tf.keras.layers.AveragePooling1D(1)(x)
-
-        # how to add this layer with Pytorch?
-        
-#        gap_layer = tf.keras.layers.Flatten()(x)
-
-#        noise_layer = K.zeros_like(gap_layer)
-#        noise_layer = tf.keras.layers.GaussianNoise(10)(noise_layer)
-
-#        if is_train:
-#            x = tf.keras.layers.Lambda(lambda z: tf.concat(z, axis=0))([gap_layer, noise_layer])
-#        else:
-#            x = gap_layer
-
-#        output_layer = tf.keras.layers.Dense(nb_classes, activation='sigmoid')(x)
-
-#        model = tf.keras.models.Model(inputs=input_layer, outputs=output_layer)
-
-#        return model
+    def validation_step(self, val_batch, batch_idx):
+        data, labels, val_ids = val_batch
+        val_outputs = self.forward(data)
+        val_loss = self.val_criterion(val_outputs, labels.unsqueeze(1).to(torch.float))
+        predicted_labels = (val_outputs >= 0.5).type(torch.long).data.numpy()
+        val_labels = labels.to(torch.long).numpy()
+        val_acc = balanced_accuracy_score(val_labels, predicted_labels)
+        self.log('val_loss', val_loss, batch_size=self.batch_size)
+        self.log('val_bal_acc', val_acc, batch_size=self.batch_size)

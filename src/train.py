@@ -9,15 +9,18 @@ import os
 import pandas as pd
 import time
 import torch
+import lightning.pytorch as pl
 
 from dataloader import CustomDataLoader
-from SquiggleNetModel import Bottleneck, SquiggleNet
+from SquiggleNetModel import Bottleneck, SquiggleNet, SquiggleNetLightning
 from DeepSelectNetModel import DSBottleneck, DeepSelectNet
 from MitoModel import bnLSTM, VDCNN_bnLSTM_1window, VDCNN_gru_1window_hidden, regGru_32window_hidden_BN
 from numpy import random
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, confusion_matrix, f1_score, precision_score, recall_score
 from torch import nn
 from tqdm import tqdm
+from lightning.pytorch.callbacks.early_stopping import EarlyStopping
+from lightning.pytorch.callbacks.device_stats_monitor import DeviceStatsMonitor
 
 
 PLASMID_LABEL = 0
@@ -129,37 +132,18 @@ def main(p_train, p_val, p_ids, chr_train, chr_val, chr_ids, out_folder, interm,
     print(f'Class counts for validation: {validation_generator.get_class_counts()}')
 
     # create new or load trained model
-    if train_model == 'SquiggleNet':
-        model = SquiggleNet(Bottleneck, layers=[2, 2, 2, 2]).to(device)
-    elif train_model == 'DeepSelectNet':
-        model = DeepSelectNet(DSBottleneck, layers=[2, 2, 2, 2]).to(device)
-    elif train_model == 'bnLSTM':
-        model = bnLSTM(input_size=1, hidden_size=512, max_length=4000,  num_layers=1,
-				 use_bias=True, batch_first=True, dropout=0.5)
-    elif train_model == 'vdCNN_bnLSTM':
-        model = VDCNN_bnLSTM_1window(input_size=1, hidden_size=512, max_length=4000,  num_layers=1,
-				 use_bias=True, batch_first=True, dropout=0.5)
-    elif train_model == 'vdCNN_GRU':
-        model = VDCNN_gru_1window_hidden(input_size=1, hidden_size=512, max_length=4000,  num_layers=1,
-				 use_bias=True, batch_first=True, dropout=0.5)
-    elif train_model == 'regGRU':
-        model = regGru_32window_hidden_BN(input_size=1, hidden_size=512, max_length=4000,  num_layers=1,
-				 use_bias=True, batch_first=True, dropout=0.5)
-    else:
-        print("Wrong model definition: " + str(train_model))
-        return
 
-    if interm is not None:
-        model.load_state_dict(torch.load(interm))
+    #if interm is not None:
+    #    model.load_state_dict(torch.load(interm))
 
     # AdamW generalizes better and trains faster, see https://towardsdatascience.com/why-adamw-matters-736223f31b5d
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    #optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
     # use sample count per class for balancing the loss while training => only for Cross Entropy Loss
     # inspired by https://scikit-learn.org/stable/modules/generated/sklearn.utils.class_weight.compute_class_weight.html
-    train_class_weights = [training_generator.get_n_reads() / (2 * class_count)
-                           for class_count in training_generator.get_class_counts()]
-    train_class_weights = torch.as_tensor(train_class_weights, dtype=torch.float)
+    #train_class_weights = [training_generator.get_n_reads() / (2 * class_count)
+    #                       for class_count in training_generator.get_class_counts()]
+    #train_class_weights = torch.as_tensor(train_class_weights, dtype=torch.float)
     #train_criterion = nn.CrossEntropyLoss(weight=train_class_weights).to(device)
     
     # Note JUU 18/10/2023
@@ -168,21 +152,51 @@ def main(p_train, p_val, p_ids, chr_train, chr_val, chr_ids, out_folder, interm,
 
     # Note JUU 17/10/2023
     # Better use BCEWithLogitsLoss for binary classification
-    train_criterion = nn.BCEWithLogitsLoss(pos_weight=train_pos_weight).to(device)
+    # Note JUU 19/10/2023
+    # implemented in Lightning Module Classes
+    # train_criterion = nn.BCEWithLogitsLoss(pos_weight=train_pos_weight).to(device)
     
 
     # Note JUU 18/10/2023
     # Also for validation, better use BCEWithLogitsLoss for binary classification
     # with single weight for the positive class (plasmid)
-    val_class_weights = [validation_generator.get_n_reads() / (2 * class_count)
-                         for class_count in validation_generator.get_class_counts()]
-    val_class_weights = torch.as_tensor(val_class_weights, dtype=torch.float)
+    #val_class_weights = [validation_generator.get_n_reads() / (2 * class_count)
+    #                     for class_count in validation_generator.get_class_counts()]
+    #val_class_weights = torch.as_tensor(val_class_weights, dtype=torch.float)
     #val_criterion = nn.CrossEntropyLoss(weight=val_class_weights).to(device)
 
 
     val_pos_weight = torch.as_tensor(validation_generator.get_class_counts()[1] / (validation_generator.get_class_counts()[0] + 1e-5), dtype=torch.float)
-    val_criterion = nn.BCEWithLogitsLoss(pos_weight=val_pos_weight).to(device)
+    #val_criterion = nn.BCEWithLogitsLoss(pos_weight=val_pos_weight).to(device)
    
+    if train_model == 'SquiggleNet':
+        model = SquiggleNetLightning(Bottleneck, layers=[2, 2, 2, 2], learning_rate=learning_rate, batch_size=batch_size,train_pos_weight=train_pos_weight, val_pos_weight=val_pos_weight)
+    elif train_model == 'DeepSelectNet':
+        model = DeepSelectNet(DSBottleneck, layers=[2, 2, 2, 2], learning_rate=learning_rate, batch_size=batch_size,train_pos_weight=train_pos_weight, val_pos_weight=val_pos_weight)
+#    elif train_model == 'bnLSTM':
+#        model = bnLSTM(input_size=1, hidden_size=512, max_length=4000,  num_layers=1,
+#				 use_bias=True, batch_first=True, dropout=0.5)
+#    elif train_model == 'vdCNN_bnLSTM':
+#        model = VDCNN_bnLSTM_1window(input_size=1, hidden_size=512, max_length=4000,  num_layers=1,
+#				 use_bias=True, batch_first=True, dropout=0.5)
+#    elif train_model == 'vdCNN_GRU':
+#        model = VDCNN_gru_1window_hidden(input_size=1, hidden_size=512, max_length=4000,  num_layers=1,
+#				 use_bias=True, batch_first=True, dropout=0.5)
+#    elif train_model == 'regGRU':
+#        model = regGru_32window_hidden_BN(input_size=1, hidden_size=512, max_length=4000,  num_layers=1,
+#				 use_bias=True, batch_first=True, dropout=0.5)
+    else:
+        print("Wrong model definition: " + str(train_model))
+        return
+
+
+    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0.00, patience=10, verbose=False, mode="min")
+    device_stats = DeviceStatsMonitor() 
+    # callbacks=[early_stop_callback, device_stats],
+    trainer = pl.Trainer(default_root_dir=out_folder, max_epochs=n_epochs, callbacks=[early_stop_callback, device_stats])
+    trainer.fit(model, training_generator, validation_generator)
+
+    return
 
     # setup best model consisting of epoch and metric (for accuracy and loss as model selection criterion)
     best_model_acc = (0, 0)
