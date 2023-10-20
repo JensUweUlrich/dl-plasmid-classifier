@@ -133,7 +133,7 @@ class SquiggleNetLightning(pl.LightningModule):
 
     def __init__(self, block, layers, learning_rate, batch_size, train_pos_weight, val_pos_weight):
         super(SquiggleNetLightning, self).__init__()
-        self.save_hyperparameters()
+        #self.save_hyperparameters()
         self.chan1 = 20
 
         self.lr = learning_rate

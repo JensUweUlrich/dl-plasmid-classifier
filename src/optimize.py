@@ -12,7 +12,7 @@ import os
 import pandas as pd
 import torch
 
-from src.SquiggleNetModel import Bottleneck, ResNet
+from models.SquiggleNetModel import Bottleneck, ResNet
 from numpy import random
 from ont_fast5_api.fast5_interface import get_fast5_file
 from ont_fast5_api.multi_fast5 import MultiFast5File

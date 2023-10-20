@@ -12,15 +12,16 @@ import torch
 import lightning.pytorch as pl
 
 from dataloader import CustomDataLoader
-from SquiggleNetModel import Bottleneck, SquiggleNet, SquiggleNetLightning
-from DeepSelectNetModel import DSBottleneck, DeepSelectNet
-from MitoModel import bnLSTM, VDCNN_bnLSTM_1window, VDCNN_gru_1window_hidden, regGru_32window_hidden_BN
+from models.SquiggleNetModel import Bottleneck, SquiggleNetLightning
+from models.DeepSelectNetModel import DSBottleneck, DeepSelectNet
+from models.BNLSTM import bnLSTM
+from MitoModel import VDCNN_bnLSTM_1window, VDCNN_gru_1window_hidden, regGru_32window_hidden_BN
 from numpy import random
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, confusion_matrix, f1_score, precision_score, recall_score
 from torch import nn
 from tqdm import tqdm
-from lightning.pytorch.callbacks.early_stopping import EarlyStopping
-from lightning.pytorch.callbacks.device_stats_monitor import DeviceStatsMonitor
+from lightning.pytorch.callbacks import EarlyStopping, DeviceStatsMonitor, ModelSummary, ModelCheckpoint
+
 
 
 PLASMID_LABEL = 0
@@ -125,8 +126,13 @@ def main(p_train, p_val, p_ids, chr_train, chr_val, chr_ids, out_folder, interm,
               'num_workers': n_workers,
               'pin_memory': True}  # speed up data transfer from CPU to GPU
     random_gen = random.default_rng(random_seed)
-    training_generator = CustomDataLoader(p_train, chr_train, params, random_gen)
-    validation_generator = CustomDataLoader(p_val, chr_val, params, random_gen, p_ids, chr_ids)
+
+    transform_input = True
+    if train_model == 'SquiggleNet' or train_model == 'DeepSelectNet':
+        transform_input = False
+
+    training_generator = CustomDataLoader(p_train, chr_train, params, random_gen, transform=transform_input)
+    validation_generator = CustomDataLoader(p_val, chr_val, params, random_gen, p_ids, chr_ids, transform=transform_input)
 
     print(f'Class counts for training: {training_generator.get_class_counts()}')
     print(f'Class counts for validation: {validation_generator.get_class_counts()}')
@@ -173,9 +179,9 @@ def main(p_train, p_val, p_ids, chr_train, chr_val, chr_ids, out_folder, interm,
         model = SquiggleNetLightning(Bottleneck, layers=[2, 2, 2, 2], learning_rate=learning_rate, batch_size=batch_size,train_pos_weight=train_pos_weight, val_pos_weight=val_pos_weight)
     elif train_model == 'DeepSelectNet':
         model = DeepSelectNet(DSBottleneck, layers=[2, 2, 2, 2], learning_rate=learning_rate, batch_size=batch_size,train_pos_weight=train_pos_weight, val_pos_weight=val_pos_weight)
-#    elif train_model == 'bnLSTM':
-#        model = bnLSTM(input_size=1, hidden_size=512, max_length=4000,  num_layers=1,
-#				 use_bias=True, batch_first=True, dropout=0.5)
+    elif train_model == 'bnLSTM':
+        model = bnLSTM(input_size=32, hidden_size=512, max_length=4000, learning_rate=learning_rate, batch_size=batch_size,train_pos_weight=train_pos_weight, val_pos_weight=val_pos_weight,
+                       num_layers=1, use_bias=True, batch_first=True, dropout=0.5)
 #    elif train_model == 'vdCNN_bnLSTM':
 #        model = VDCNN_bnLSTM_1window(input_size=1, hidden_size=512, max_length=4000,  num_layers=1,
 #				 use_bias=True, batch_first=True, dropout=0.5)
@@ -191,9 +197,11 @@ def main(p_train, p_val, p_ids, chr_train, chr_val, chr_ids, out_folder, interm,
 
 
     early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0.00, patience=10, verbose=False, mode="min")
-    device_stats = DeviceStatsMonitor() 
+    device_stats = DeviceStatsMonitor()
+    model_summary = ModelSummary(max_depth=-1)
+    checkpoint = ModelCheckpoint(monitor='val_loss', dirpath= f'{out_folder}/models/', filename='plasmid-classifier-{epoch:02d}-{val_loss:.2f}', every_n_epochs=0) 
     # callbacks=[early_stop_callback, device_stats],
-    trainer = pl.Trainer(default_root_dir=out_folder, max_epochs=n_epochs, callbacks=[early_stop_callback, device_stats])
+    trainer = pl.Trainer(default_root_dir=out_folder, max_epochs=n_epochs, callbacks=[early_stop_callback, device_stats, model_summary, checkpoint])
     trainer.fit(model, training_generator, validation_generator)
 
     return

@@ -12,13 +12,14 @@ from torch.utils.data import DataLoader
 
 
 class CustomDataLoader:
-    def __init__(self, pos_dir, neg_dir, params, random_gen, pos_ids=None, neg_ids=None):
+    def __init__(self, pos_dir, neg_dir, params, random_gen, pos_ids=None, neg_ids=None, transform=False):
         # init files
         p_files = glob.glob(f'{pos_dir}/*.pt')
         c_files = glob.glob(f'{neg_dir}/*.pt')
         self.files = list(zip(p_files, c_files))
         self.current_file = None
         self.current_file_idx = 0
+        self.transform = transform
 
         # set read ID lists (if wanted for validation)
         if pos_ids is not None and neg_ids is not None:
@@ -86,7 +87,7 @@ class CustomDataLoader:
 
         #print(self.files[self.current_file_idx])
         dataset = CustomDataset(self.files[self.current_file_idx], self.pos_ids, self.current_pos_idx, self.neg_ids,
-                                self.current_neg_idx)
+                                self.current_neg_idx, self.transform)
         self.current_pos_idx += dataset.get_n_pos_reads()
         self.current_neg_idx += dataset.get_n_neg_reads()
         self.current_file_idx += 1
