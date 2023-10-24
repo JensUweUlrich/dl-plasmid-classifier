@@ -6,6 +6,7 @@ an extra CrossEntropyLoss object which now balances the loss according to the nu
 
 import click
 import os
+import glob
 import pandas as pd
 import time
 import torch
@@ -131,78 +132,98 @@ def main(p_train, p_val, p_ids, chr_train, chr_val, chr_ids, out_folder, interm,
     if train_model == 'SquiggleNet' or train_model == 'DeepSelectNet':
         transform_input = False
 
-    training_generator = CustomDataLoader(p_train, chr_train, params, random_gen, transform=transform_input)
+
     validation_generator = CustomDataLoader(p_val, chr_val, params, random_gen, p_ids, chr_ids, transform=transform_input)
 
-    print(f'Class counts for training: {training_generator.get_class_counts()}')
-    print(f'Class counts for validation: {validation_generator.get_class_counts()}')
+    chr_dirs = glob.glob(f'{chr_train}_*')
+    for d in chr_dirs:
+        print(d)
 
-    # create new or load trained model
-
-    #if interm is not None:
-    #    model.load_state_dict(torch.load(interm))
-
-    # AdamW generalizes better and trains faster, see https://towardsdatascience.com/why-adamw-matters-736223f31b5d
-    #optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
-
-    # use sample count per class for balancing the loss while training => only for Cross Entropy Loss
-    # inspired by https://scikit-learn.org/stable/modules/generated/sklearn.utils.class_weight.compute_class_weight.html
-    #train_class_weights = [training_generator.get_n_reads() / (2 * class_count)
-    #                       for class_count in training_generator.get_class_counts()]
-    #train_class_weights = torch.as_tensor(train_class_weights, dtype=torch.float)
-    #train_criterion = nn.CrossEntropyLoss(weight=train_class_weights).to(device)
     
-    # Note JUU 18/10/2023
-    # Calculate only weight for the positive class (plasmid) when using BCEwithLogitsLoss
-    train_pos_weight = torch.as_tensor(training_generator.get_class_counts()[1] / (training_generator.get_class_counts()[0] + 1e-5), dtype=torch.float)
+    for chr_train_dir in chr_dirs:
 
-    # Note JUU 17/10/2023
-    # Better use BCEWithLogitsLoss for binary classification
-    # Note JUU 19/10/2023
-    # implemented in Lightning Module Classes
-    # train_criterion = nn.BCEWithLogitsLoss(pos_weight=train_pos_weight).to(device)
+        if chr_train_dir == f'{chr_train}_ALIGNED':
+            continue
+
+        training_generator = CustomDataLoader(p_train, chr_train_dir, params, random_gen, transform=transform_input)
     
 
-    # Note JUU 18/10/2023
-    # Also for validation, better use BCEWithLogitsLoss for binary classification
-    # with single weight for the positive class (plasmid)
-    #val_class_weights = [validation_generator.get_n_reads() / (2 * class_count)
-    #                     for class_count in validation_generator.get_class_counts()]
-    #val_class_weights = torch.as_tensor(val_class_weights, dtype=torch.float)
-    #val_criterion = nn.CrossEntropyLoss(weight=val_class_weights).to(device)
+        print(f'Class counts for training: {training_generator.get_class_counts()}')
+        print(f'Class counts for validation: {validation_generator.get_class_counts()}')
+
+        # create new or load trained model
+
+        #if interm is not None:
+        #    model.load_state_dict(torch.load(interm))
+
+        # AdamW generalizes better and trains faster, see https://towardsdatascience.com/why-adamw-matters-736223f31b5d
+        #optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+
+        # use sample count per class for balancing the loss while training => only for Cross Entropy Loss
+        # inspired by https://scikit-learn.org/stable/modules/generated/sklearn.utils.class_weight.compute_class_weight.html
+        #train_class_weights = [training_generator.get_n_reads() / (2 * class_count)
+        #                       for class_count in training_generator.get_class_counts()]
+        #train_class_weights = torch.as_tensor(train_class_weights, dtype=torch.float)
+        #train_criterion = nn.CrossEntropyLoss(weight=train_class_weights).to(device)
+    
+        # Note JUU 18/10/2023
+        # Calculate only weight for the positive class (plasmid) when using BCEwithLogitsLoss
+        train_pos_weight = torch.as_tensor(training_generator.get_class_counts()[1] / (training_generator.get_class_counts()[0] + 1e-5), dtype=torch.float)
+
+        # Note JUU 17/10/2023
+        # Better use BCEWithLogitsLoss for binary classification
+        # Note JUU 19/10/2023
+        # implemented in Lightning Module Classes
+        # train_criterion = nn.BCEWithLogitsLoss(pos_weight=train_pos_weight).to(device)
+        
+
+        # Note JUU 18/10/2023
+        # Also for validation, better use BCEWithLogitsLoss for binary classification
+        # with single weight for the positive class (plasmid)
+        #val_class_weights = [validation_generator.get_n_reads() / (2 * class_count)
+        #                     for class_count in validation_generator.get_class_counts()]
+        #val_class_weights = torch.as_tensor(val_class_weights, dtype=torch.float)
+        #val_criterion = nn.CrossEntropyLoss(weight=val_class_weights).to(device)
 
 
-    val_pos_weight = torch.as_tensor(validation_generator.get_class_counts()[1] / (validation_generator.get_class_counts()[0] + 1e-5), dtype=torch.float)
-    #val_criterion = nn.BCEWithLogitsLoss(pos_weight=val_pos_weight).to(device)
-   
-    if train_model == 'SquiggleNet':
-        model = SquiggleNetLightning(Bottleneck, layers=[2, 2, 2, 2], learning_rate=learning_rate, batch_size=batch_size,train_pos_weight=train_pos_weight, val_pos_weight=val_pos_weight)
-    elif train_model == 'DeepSelectNet':
-        model = DeepSelectNet(DSBottleneck, layers=[2, 2, 2, 2], learning_rate=learning_rate, batch_size=batch_size,train_pos_weight=train_pos_weight, val_pos_weight=val_pos_weight)
-    elif train_model == 'bnLSTM':
-        model = bnLSTM(input_size=32, hidden_size=512, max_length=4000, learning_rate=learning_rate, batch_size=batch_size,train_pos_weight=train_pos_weight, val_pos_weight=val_pos_weight,
-                       num_layers=1, use_bias=True, batch_first=True, dropout=0.5)
-#    elif train_model == 'vdCNN_bnLSTM':
-#        model = VDCNN_bnLSTM_1window(input_size=1, hidden_size=512, max_length=4000,  num_layers=1,
-#				 use_bias=True, batch_first=True, dropout=0.5)
-#    elif train_model == 'vdCNN_GRU':
-#        model = VDCNN_gru_1window_hidden(input_size=1, hidden_size=512, max_length=4000,  num_layers=1,
-#				 use_bias=True, batch_first=True, dropout=0.5)
-#    elif train_model == 'regGRU':
-#        model = regGru_32window_hidden_BN(input_size=1, hidden_size=512, max_length=4000,  num_layers=1,
-#				 use_bias=True, batch_first=True, dropout=0.5)
-    else:
-        print("Wrong model definition: " + str(train_model))
-        return
+        val_pos_weight = torch.as_tensor(validation_generator.get_class_counts()[1] / (validation_generator.get_class_counts()[0] + 1e-5), dtype=torch.float)
+        #val_criterion = nn.BCEWithLogitsLoss(pos_weight=val_pos_weight).to(device)
+    
+        if train_model == 'SquiggleNet':
+            model = SquiggleNetLightning(Bottleneck, layers=[2, 2, 2, 2], learning_rate=learning_rate, batch_size=batch_size,train_pos_weight=train_pos_weight, val_pos_weight=val_pos_weight)
+        elif train_model == 'DeepSelectNet':
+            model = DeepSelectNet(DSBottleneck, layers=[2, 2, 2, 2], learning_rate=learning_rate, batch_size=batch_size,train_pos_weight=train_pos_weight, val_pos_weight=val_pos_weight)
+        elif train_model == 'bnLSTM':
+            model = bnLSTM(input_size=32, hidden_size=512, max_length=4000, learning_rate=learning_rate, batch_size=batch_size,train_pos_weight=train_pos_weight, val_pos_weight=val_pos_weight,
+                        num_layers=1, use_bias=True, batch_first=True, dropout=0.5)
+    #    elif train_model == 'vdCNN_bnLSTM':
+    #        model = VDCNN_bnLSTM_1window(input_size=1, hidden_size=512, max_length=4000,  num_layers=1,
+    #				 use_bias=True, batch_first=True, dropout=0.5)
+    #    elif train_model == 'vdCNN_GRU':
+    #        model = VDCNN_gru_1window_hidden(input_size=1, hidden_size=512, max_length=4000,  num_layers=1,
+    #				 use_bias=True, batch_first=True, dropout=0.5)
+    #    elif train_model == 'regGRU':
+    #        model = regGru_32window_hidden_BN(input_size=1, hidden_size=512, max_length=4000,  num_layers=1,
+    #				 use_bias=True, batch_first=True, dropout=0.5)
+        else:
+            print("Wrong model definition: " + str(train_model))
+            return
 
 
-    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0.00, patience=10, verbose=False, mode="min")
-    device_stats = DeviceStatsMonitor()
-    model_summary = ModelSummary(max_depth=-1)
-    checkpoint = ModelCheckpoint(monitor='val_loss', dirpath= f'{out_folder}/models/', filename='plasmid-classifier-{epoch:02d}-{val_loss:.2f}', every_n_epochs=0) 
-    # callbacks=[early_stop_callback, device_stats],
-    trainer = pl.Trainer(default_root_dir=out_folder, max_epochs=n_epochs, callbacks=[early_stop_callback, device_stats, model_summary, checkpoint])
-    trainer.fit(model, training_generator, validation_generator)
+        chkpath = str(out_folder) + "/models/"
+        best_model = chr_dirs = glob.glob(f'{chkpath}/epoch*-val_loss*-val_bal_acc*.ckpt')
+
+        early_stop_callback = EarlyStopping(monitor="val_bal_acc", min_delta=0.00, patience=10, verbose=False, mode="max")
+        device_stats = DeviceStatsMonitor()
+        model_summary = ModelSummary(max_depth=-1)
+        
+        checkpoint = ModelCheckpoint(monitor='val_bal_acc', dirpath=chkpath, filename='epoch{epoch:02d}-val_loss{val_loss:.2f}-val_bal_acc{val_bal_acc:.2f}', mode="max", auto_insert_metric_name=False, save_top_k=1) 
+        # callbacks=[early_stop_callback, device_stats],
+        trainer = pl.Trainer(default_root_dir=out_folder, max_epochs=n_epochs, callbacks=[checkpoint, early_stop_callback])
+        if best_model is not None:
+            trainer.fit(model, training_generator, validation_generator, ckpt_path=best_model)
+        else:
+            trainer.fit(model, training_generator, validation_generator)
 
     return
 

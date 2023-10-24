@@ -223,3 +223,4 @@ class SquiggleNetLightning(pl.LightningModule):
         val_acc = balanced_accuracy_score(val_labels, predicted_labels)
         self.log('val_loss', val_loss, batch_size=self.batch_size)
         self.log('val_bal_acc', val_acc, batch_size=self.batch_size)
+        return val_loss
