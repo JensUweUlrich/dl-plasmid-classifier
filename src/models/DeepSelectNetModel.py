@@ -184,9 +184,9 @@ class DeepSelectNet(pl.LightningModule):
         data, labels, val_ids = val_batch
         val_outputs = self.forward(data)
         val_loss = self.val_criterion(val_outputs, labels.unsqueeze(1).to(torch.float))
-        predicted_labels = (val_outputs >= 0.5).type(torch.long).data.numpy()
-        val_labels = labels.to(torch.long).numpy()
-        val_acc = balanced_accuracy_score(val_labels, predicted_labels)
+        predicted_labels = (val_outputs >= 0.5).type(torch.long).cpu().data.numpy()
+        val_labels = labels.to(torch.long).cpu().numpy()
+        val_acc = torch.tensor(balanced_accuracy_score(val_labels, predicted_labels))
         self.log('val_loss', val_loss, batch_size=self.batch_size)
         self.log('val_bal_acc', val_acc, batch_size=self.batch_size)
         return val_loss

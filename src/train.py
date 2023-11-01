@@ -88,8 +88,8 @@ def update_stopping_criterion(current_loss, last_loss, trigger_times):
 @click.option('--p_val', '-pv', help='folder with plasmid validation tensor files', required=True,
               type=click.Path(exists=True))
 @click.option('--p_ids', '-pid', help='file path of plasmid validation read ids', default=None, required=False)
-@click.option('--chr_train', '-ct', help='folder with chromosome training tensor files', required=True,
-              type=click.Path(exists=True))
+@click.option('--chr_train', '-ct', help='folder with chromosome training tensor files', required=True)
+              #type=click.Path(exists=True))
 @click.option('--chr_val', '-cv', help='folder with chromosome validation tensor files', required=True,
               type=click.Path(exists=True))
 @click.option('--chr_ids', '-cid', help='file path of chromosome validation read ids', default=None, required=False)
@@ -125,25 +125,25 @@ def main(p_train, p_val, p_ids, chr_train, chr_val, chr_ids, out_folder, interm,
     params = {'batch_size': batch_size,
               'shuffle': True,
               'num_workers': n_workers,
-              'pin_memory': True}  # speed up data transfer from CPU to GPU
+              'pin_memory': False}  # speed up data transfer from CPU to GPU
     random_gen = random.default_rng(random_seed)
 
     transform_input = True
     if train_model == 'SquiggleNet' or train_model == 'DeepSelectNet':
         transform_input = False
 
-
     validation_generator = CustomDataLoader(p_val, chr_val, params, random_gen, p_ids, chr_ids, transform=transform_input)
 
     chr_dirs = glob.glob(f'{chr_train}_*')
-    for d in chr_dirs:
-        print(d)
-
     
     for chr_train_dir in chr_dirs:
 
-        if chr_train_dir == f'{chr_train}_ALIGNED':
+        if chr_train_dir == f'{chr_train}_ALIGNED' or chr_train_dir == 'chr_train_13':
             continue
+            
+        if not os.path.exists(chr_train_dir):
+            print("Error: " + chr_train_dir + " does not exist!")
+            return
 
         training_generator = CustomDataLoader(p_train, chr_train_dir, params, random_gen, transform=transform_input)
     
@@ -211,8 +211,15 @@ def main(p_train, p_val, p_ids, chr_train, chr_val, chr_ids, out_folder, interm,
 
 
         chkpath = str(out_folder) + "/models/"
-        best_model = chr_dirs = glob.glob(f'{chkpath}/epoch*-val_loss*-val_bal_acc*.ckpt')
-
+        all_models = glob.glob(f'{chkpath}/epoch*-val_loss*-val_bal_acc*.ckpt')
+        best_model = ""
+        best_acc = 0.0
+        for f in all_models:
+            bacc = float((f.split("val_bal_acc")[1]).split(".ckpt")[0])
+            if bacc > best_acc:
+                best_acc = bacc
+                best_model = f
+        
         early_stop_callback = EarlyStopping(monitor="val_bal_acc", min_delta=0.00, patience=10, verbose=False, mode="max")
         device_stats = DeviceStatsMonitor()
         model_summary = ModelSummary(max_depth=-1)
@@ -220,7 +227,7 @@ def main(p_train, p_val, p_ids, chr_train, chr_val, chr_ids, out_folder, interm,
         checkpoint = ModelCheckpoint(monitor='val_bal_acc', dirpath=chkpath, filename='epoch{epoch:02d}-val_loss{val_loss:.2f}-val_bal_acc{val_bal_acc:.2f}', mode="max", auto_insert_metric_name=False, save_top_k=1) 
         # callbacks=[early_stop_callback, device_stats],
         trainer = pl.Trainer(default_root_dir=out_folder, max_epochs=n_epochs, callbacks=[checkpoint, early_stop_callback])
-        if best_model is not None:
+        if len(best_model) > 0:
             trainer.fit(model, training_generator, validation_generator, ckpt_path=best_model)
         else:
             trainer.fit(model, training_generator, validation_generator)

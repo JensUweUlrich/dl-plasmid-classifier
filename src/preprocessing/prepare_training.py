@@ -95,7 +95,9 @@ def main(train_sim_neg, train_sim_pos, val_sim_neg, val_sim_pos, out_dir, cutoff
         use_single_batch = True
 
     for ds_path in [train_sim_neg, train_sim_pos, val_sim_neg, val_sim_pos]:
-        ds_name = os.path.basename(ds_path)
+    #for ds_path in [val_sim_pos]:
+        #print(ds_path)
+        ds_name = ds_path #os.path.basename(ds_path)
         print(f'\nDataset: {ds_name}')
 
         if not os.path.exists(f'{out_dir}/{ds_name}'):
