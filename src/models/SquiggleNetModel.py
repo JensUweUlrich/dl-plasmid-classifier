@@ -3,13 +3,12 @@ This model is from the SquiggleNet project, see https://github.com/welch-lab/Squ
 """
 
 from typing import Any
-from lightning.pytorch.utilities.types import STEP_OUTPUT
+from pytorch_lightning.utilities.types import STEP_OUTPUT
 import torch
 
 from torch import nn
-import lightning.pytorch as pl
+import pytorch_lightning as pl
 from sklearn.metrics import balanced_accuracy_score
-
 
 def conv3(in_channel, out_channel, stride=1, padding=1, groups=1):
     return nn.Conv1d(in_channel, out_channel, kernel_size=3, stride=stride, padding=padding, bias=False,
@@ -131,15 +130,17 @@ class SquiggleNet(nn.Module):
 
 class SquiggleNetLightning(pl.LightningModule):
 
-    def __init__(self, block, layers, learning_rate, batch_size, train_pos_weight, val_pos_weight):
+    def __init__(self, block, config):
         super(SquiggleNetLightning, self).__init__()
         #self.save_hyperparameters()
         self.chan1 = 20
 
-        self.lr = learning_rate
-        self.batch_size = batch_size
-        self.train_criterion = nn.BCEWithLogitsLoss(pos_weight=train_pos_weight)
-        self.val_criterion = nn.BCEWithLogitsLoss(pos_weight=val_pos_weight)
+        print(config)
+
+        self.lr = config['learning_rate']
+        self.batch_size = config['batch_size']
+        self.train_criterion = nn.BCEWithLogitsLoss(pos_weight=config['train_pos_weight'])
+        self.val_criterion = nn.BCEWithLogitsLoss(pos_weight=config['val_pos_weight'])
 
         # first block
         self.conv1 = nn.Conv1d(1, 20, 19, padding=5, stride=3)
@@ -148,15 +149,27 @@ class SquiggleNetLightning(pl.LightningModule):
         self.pool = nn.MaxPool1d(2, padding=1, stride=2)
         self.avgpool = nn.AdaptiveAvgPool1d(1)
         
+
+        layers = []
+        layers.append(self._make_layer(block, channels=20, blocks=config['num_blocks']))
+        channels = 20
+        for i in range(1, config['num_layers']):
+            channels = int(float(channels) * 1.5)
+            layers.append(self._make_layer(block, channels, blocks=config['num_blocks'], stride=2))
+
+        self.hidden_layers = nn.Sequential(*layers)
         # Note JUU 17/10/2023 
         # Only one output neuron for binary classification with
         # binary cross entropy loss function
-        self.fc = nn.Linear(67, 1)
+        self.fc = nn.Linear(channels, 1)
 
-        self.layer1 = self._make_layer(block, 20, layers[0])
-        self.layer2 = self._make_layer(block, 30, layers[1], stride=2)
-        self.layer3 = self._make_layer(block, 45, layers[2], stride=2)
-        self.layer4 = self._make_layer(block, 67, layers[3], stride=2)
+        #self.layer1 = self._make_layer(block, 20, layers[0])
+        #self.layer2 = self._make_layer(block, 30, layers[1], stride=2)
+        #self.layer3 = self._make_layer(block, 45, layers[2], stride=2)
+        #self.layer4 = self._make_layer(block, 67, layers[3], stride=2)
+
+        self.eval_loss = []
+        self.eval_accuracy = []
 
         # initialization
         for m in self.modules():
@@ -189,10 +202,12 @@ class SquiggleNetLightning(pl.LightningModule):
         x = self.relu(x)
         x = self.pool(x)
 
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
+        x = self.hidden_layers(x)
+
+        #x = self.layer1(x)
+        #x = self.layer2(x)
+        #x = self.layer3(x)
+        #x = self.layer4(x)
 
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
@@ -223,4 +238,14 @@ class SquiggleNetLightning(pl.LightningModule):
         val_acc = torch.tensor(balanced_accuracy_score(val_labels, predicted_labels))
         self.log('val_loss', val_loss, batch_size=self.batch_size)
         self.log('val_bal_acc', val_acc, batch_size=self.batch_size)
-        return val_loss
+        self.eval_loss.append(val_loss)
+        self.eval_accuracy.append(val_acc)
+        return {"val_loss": val_loss, "val_bal_acc": val_acc}
+
+    def on_validation_epoch_end(self):
+        avg_loss = torch.stack(self.eval_loss).mean()
+        avg_acc = torch.stack(self.eval_accuracy).mean()
+        self.log("ptl/val_loss", avg_loss, sync_dist=True)
+        self.log("ptl/val_accuracy", avg_acc, sync_dist=True)
+        self.eval_loss.clear()
+        self.eval_accuracy.clear()

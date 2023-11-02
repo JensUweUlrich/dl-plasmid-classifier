@@ -75,14 +75,14 @@ class GaussianNoise(nn.Module):
 
 class DeepSelectNet(pl.LightningModule):
 
-    def __init__(self, block, layers, learning_rate, batch_size, train_pos_weight, val_pos_weight):
+    def __init__(self, block, config):
         super(DeepSelectNet, self).__init__()
         #self.save_hyperparameters()
 
-        self.lr = learning_rate
-        self.batch_size = batch_size
-        self.train_criterion = nn.BCEWithLogitsLoss(pos_weight=train_pos_weight)
-        self.val_criterion = nn.BCEWithLogitsLoss(pos_weight=val_pos_weight)
+        self.lr = config['learning_rate']
+        self.batch_size = config['batch_size']
+        self.train_criterion = nn.BCEWithLogitsLoss(pos_weight=config['train_pos_weight'])
+        self.val_criterion = nn.BCEWithLogitsLoss(pos_weight=config['val_pos_weight'])
 
         self.chan1 = 20
         # first block
@@ -91,15 +91,26 @@ class DeepSelectNet(pl.LightningModule):
         self.relu = nn.ReLU(inplace=True)
         self.pool = nn.MaxPool1d(2, padding=1, stride=2)
 
-        self.dropout1 = nn.Dropout(0.1)
-        self.dropout2 = nn.Dropout(0.1)
-        self.dropout3 = nn.Dropout(0.1)
-        self.dropout4 = nn.Dropout(0.1)
+        #self.dropout1 = nn.Dropout(0.1)
+        #self.dropout2 = nn.Dropout(0.1)
+        #self.dropout3 = nn.Dropout(0.1)
+        #self.dropout4 = nn.Dropout(0.1)
 
-        self.layer1 = self._make_layer(block, 20, layers[0])
-        self.layer2 = self._make_layer(block, 30, layers[1], stride=2)
-        self.layer3 = self._make_layer(block, 45, layers[2], stride=2)
-        self.layer4 = self._make_layer(block, 67, layers[3], stride=2)
+
+        layers = []
+        layers.append(self._make_layer(block, channels=20, blocks=config['num_blocks']))
+        channels = 20
+        for i in range(1, config['num_layers']):
+            layers.append(nn.Dropout(config['dropout']))
+            channels = int(float(channels) * 1.5)
+            layers.append(self._make_layer(block, channels, blocks=config['num_blocks'], stride=2))
+
+        self.hidden_layers = nn.Sequential(*layers)
+
+        #self.layer1 = self._make_layer(block, 20, layers[0])
+        #self.layer2 = self._make_layer(block, 30, layers[1], stride=2)
+        #self.layer3 = self._make_layer(block, 45, layers[2], stride=2)
+        #self.layer4 = self._make_layer(block, 67, layers[3], stride=2)
 
         self.avgpool = nn.AdaptiveAvgPool1d(1)
         self.noise_layer = GaussianNoise(10)
@@ -110,7 +121,7 @@ class DeepSelectNet(pl.LightningModule):
         # no final sigmoid layer needed because BCEwithLogitsLoss includes sigmoid layer
         # and is numerically more stable
         # https://medium.com/dejunhuang/learning-day-57-practical-5-loss-function-crossentropyloss-vs-bceloss-in-pytorch-softmax-vs-bd866c8a0d23
-        self.fc = nn.Linear(67, 1)
+        self.fc = nn.Linear(channels, 1)
         #self.sigmoid = nn.Sigmoid()
 
         # initialization
@@ -147,14 +158,16 @@ class DeepSelectNet(pl.LightningModule):
         x = self.relu(x)
         x = self.pool(x)
 
-        x = self.dropout1(x)
-        x = self.layer1(x)
-        x = self.dropout2(x)
-        x = self.layer2(x)
-        x = self.dropout3(x)
-        x = self.layer3(x)
-        x = self.dropout4(x)
-        x = self.layer4(x)
+        #x = self.dropout1(x)
+        #x = self.layer1(x)
+        #x = self.dropout2(x)
+        #x = self.layer2(x)
+        #x = self.dropout3(x)
+        #x = self.layer3(x)
+        #x = self.dropout4(x)
+        #x = self.layer4(x)
+
+        x = self.hidden_layers(x)
 
         x = self.avgpool(x)
         x = torch.flatten(x, 1)

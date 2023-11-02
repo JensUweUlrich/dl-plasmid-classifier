@@ -97,7 +97,7 @@ def update_stopping_criterion(current_loss, last_loss, trigger_times):
               type=click.Path())
 @click.option('--interm', '-i', help='path to checkpoint file of already trained model (optional)', required=False,
               type=click.Path(exists=True))
-@click.option('--patience', '-p', default=2, help='patience (i.e., number of epochs) to wait before early stopping')
+@click.option('--patience', '-p', default=10, help='patience (i.e., number of epochs) to wait before early stopping')
 @click.option('--batch_size', '-b', default=1000, help='batch size, default 1000 reads')
 @click.option('--n_workers', '-w', default=4, help='number of workers, default 4')
 @click.option('--n_epochs', '-e', default=5, help='number of epochs, default 5')
@@ -189,10 +189,20 @@ def main(p_train, p_val, p_ids, chr_train, chr_val, chr_ids, out_folder, interm,
         val_pos_weight = torch.as_tensor(validation_generator.get_class_counts()[1] / (validation_generator.get_class_counts()[0] + 1e-5), dtype=torch.float)
         #val_criterion = nn.BCEWithLogitsLoss(pos_weight=val_pos_weight).to(device)
     
+        config = {
+            'learning_rate': learning_rate,
+            'batch_size' : batch_size,
+            'train_pos_weight' : train_pos_weight,
+            'val_pos_weight' : val_pos_weight,
+            'num_blocks' : 2,
+            'num_layers' : 4,
+            }
+
         if train_model == 'SquiggleNet':
-            model = SquiggleNetLightning(Bottleneck, layers=[2, 2, 2, 2], learning_rate=learning_rate, batch_size=batch_size,train_pos_weight=train_pos_weight, val_pos_weight=val_pos_weight)
+            model = SquiggleNetLightning(Bottleneck, config)
         elif train_model == 'DeepSelectNet':
-            model = DeepSelectNet(DSBottleneck, layers=[2, 2, 2, 2], learning_rate=learning_rate, batch_size=batch_size,train_pos_weight=train_pos_weight, val_pos_weight=val_pos_weight)
+            config['dropout'] = 0.1
+            model = DeepSelectNet(DSBottleneck, config)
         elif train_model == 'bnLSTM':
             model = bnLSTM(input_size=32, hidden_size=512, max_length=4000, learning_rate=learning_rate, batch_size=batch_size,train_pos_weight=train_pos_weight, val_pos_weight=val_pos_weight,
                         num_layers=1, use_bias=True, batch_first=True, dropout=0.5)
@@ -220,7 +230,7 @@ def main(p_train, p_val, p_ids, chr_train, chr_val, chr_ids, out_folder, interm,
                 best_acc = bacc
                 best_model = f
         
-        early_stop_callback = EarlyStopping(monitor="val_bal_acc", min_delta=0.00, patience=10, verbose=False, mode="max")
+        early_stop_callback = EarlyStopping(monitor="val_bal_acc", min_delta=0.00, patience=patience, verbose=False, mode="max")
         device_stats = DeviceStatsMonitor()
         model_summary = ModelSummary(max_depth=-1)
         
@@ -232,87 +242,6 @@ def main(p_train, p_val, p_ids, chr_train, chr_val, chr_ids, out_folder, interm,
         else:
             trainer.fit(model, training_generator, validation_generator)
 
-    return
-
-    # setup best model consisting of epoch and metric (for accuracy and loss as model selection criterion)
-    best_model_acc = (0, 0)
-    best_model_loss = (0, 1)
-
-    # setup early stopping
-    last_loss = 1.0
-    trigger_times = 0
-
-    train_results = pd.DataFrame(columns=['Epoch', 'Batch', 'Training Loss', 'Training Accuracy'])
-    val_results = pd.DataFrame(columns=['Epoch', 'Validation Loss', 'Validation Accuracy', 'TN', 'FP', 'FN', 'TP',
-                                        'Balanced Accuracy', 'F1S', 'MCC', 'Precision', 'Recall'])
-
-    for epoch in tqdm(range(n_epochs), desc='epoch'):
-
-        # Note JUU 13/10/2023
-        # This was not set in the original SquiggleNet implementation and Nina's code
-        # if not set correctly will impact BatchNorm and DropOut layers
-        model.train(True)
-
-        for i, (train_data, train_labels, _) in tqdm(enumerate(training_generator), desc='train-batch'):
-            train_data, train_labels = train_data.to(device), train_labels.to(torch.float).to(device)
-
-            # perform forward propagation
-            outputs_train = model(train_data)
-            train_loss = train_criterion(outputs_train, train_labels.unsqueeze(1))
-            pred_labels = (outputs_train >= 0.5).type(torch.float)
-            #print(pred_labels)
-            train_acc = (train_labels == pred_labels).float().mean().item()
-            #print(train_acc)
-            train_results = pd.concat(
-                [train_results, pd.DataFrame([{'Epoch': epoch, 'Batch': i, 'Training Loss': train_loss.item(),
-                                               'Training Accuracy': train_acc}])], ignore_index=True)
-
-            # perform backward propagation
-            # -> set gradients to zero (to avoid using combination of old and new gradient as new gradient)
-            optimizer.zero_grad()
-            # -> compute gradients of loss w.r.t. model parameters
-            train_loss.backward()
-            # -> update parameters of optimizer
-            optimizer.step()
-
-        # Note JUU 13/10/2023
-        # This was not set in the original SquiggleNet implementation and Nina's code
-        # if not set correctly will impact BatchNorm and DropOut layers
-        model.eval()
-        # validate
-        current_val_results = validate(out_folder, epoch, validation_generator, device, model, val_criterion)
-        print(f'\nValidation Loss: {str(current_val_results["Validation Loss"])}, '
-              f'Validation Accuracy: {str(current_val_results["Validation Accuracy"])}')
-        current_val_results['Epoch'] = epoch
-        val_results = pd.concat([val_results, pd.DataFrame([current_val_results])], ignore_index=True)
-
-        # save logs and model per epoch
-        train_results.to_csv(f'{out_folder}/logs/train_results_epoch{epoch}.csv', index=False)
-        val_results.to_csv(f'{out_folder}/logs/val_results_epoch{epoch}.csv', index=False)
-        torch.save(model.state_dict(), f'{out_folder}/models/model_epoch{epoch}.pt')
-
-        # update best models
-        if best_model_acc[1] < current_val_results['Validation Accuracy']:
-            best_model_acc = (epoch, current_val_results['Validation Accuracy'])
-        if best_model_loss[1] > current_val_results['Validation Loss']:
-            best_model_loss = (epoch, current_val_results['Validation Loss'])
-
-        # avoid overfitting with early stopping
-        trigger_times = update_stopping_criterion(current_val_results['Validation Loss'], last_loss, trigger_times)
-        last_loss = current_val_results['Validation Loss']
-        if trigger_times >= patience:
-            print(f'\nTraining would be early stopped!')
-            # return  # TODO: comment in again if early stopping criterion is optimized
-
-        # log current best model and runtime
-        if epoch != (n_epochs - 1):
-            print(f'\nCurrent best model based on accuracy: epoch {best_model_acc[0]}, value {best_model_acc[1]}\n'
-                  f'Current best model based on loss: epoch {best_model_loss[0]}, value {best_model_loss[1]}\n'
-                  f'Current runtime: {time.time() - start_time} seconds')
-
-    print(f'\nOverall best model based on accuracy: epoch {best_model_acc[0]}, value {best_model_acc[1]}\n'
-          f'Overall best model based on loss: epoch {best_model_loss[0]}, value {best_model_loss[1]}\n'
-          f'Overall runtime: {time.time() - start_time} seconds')
 
 
 if __name__ == '__main__':
