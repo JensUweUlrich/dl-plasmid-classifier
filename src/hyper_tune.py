@@ -90,8 +90,8 @@ def main(p_train, p_val, p_ids, chr_train, chr_val, chr_ids, out_folder,
         'batch_size' : tune.choice([32, 64, 100]),
         'train_pos_weight' : train_pos_weight,
         'val_pos_weight' : val_pos_weight,
-        'num_blocks' : tune.choice([2]),
-        'num_layers' : tune.choice([4]),
+        'num_blocks' : tune.choice([2, 3, 4]),
+        'num_layers' : tune.choice([4, 5, 6, 7]),
     }
 
     if train_model  == 'DeepSelectNet':
@@ -107,7 +107,7 @@ def main(p_train, p_val, p_ids, chr_train, chr_val, chr_ids, out_folder,
         'model_config' : config,
     }
 
-    results = _tune_models(train_config)
+    results = _tune_models(train_config, n_workers)
 
     #tune.run(
     #    partial(_train_tune, epochs=10, gpus=0),
@@ -131,7 +131,7 @@ def _train_tune(config, epochs=10, gpus=0):
     trainer.fit(model, config['train_gen'], config['val_gen'])
 
 
-def _tune_models(train_config):
+def _tune_models(train_config, n_workers):
     # The maximum training epochs
     num_epochs = 10
 
@@ -142,7 +142,7 @@ def _tune_models(train_config):
 
     scaling_config = ScalingConfig(
         #num_workers=4, use_gpu=True, resources_per_worker={"CPU": 1, "GPU": 1}
-        num_workers=1, use_gpu=False, resources_per_worker={"CPU": 1},
+        num_workers=1, use_gpu=False, resources_per_worker={"CPU": n_workers},
     )
 
     run_config = RunConfig(
