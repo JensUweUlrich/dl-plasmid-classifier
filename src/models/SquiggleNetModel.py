@@ -130,17 +130,18 @@ class SquiggleNet(nn.Module):
 
 class SquiggleNetLightning(pl.LightningModule):
 
-    def __init__(self, block, config):
+    def __init__(self, train_pos_weight, val_pos_weight,
+                 learning_rate=0.001, batch_size=100, num_blocks=2, num_layers=4):
         super(SquiggleNetLightning, self).__init__()
         #self.save_hyperparameters()
         self.chan1 = 20
+        block = Bottleneck
+        #print(config)
 
-        print(config)
-
-        self.lr = config['learning_rate']
-        self.batch_size = config['batch_size']
-        self.train_criterion = nn.BCEWithLogitsLoss(pos_weight=config['train_pos_weight'])
-        self.val_criterion = nn.BCEWithLogitsLoss(pos_weight=config['val_pos_weight'])
+        self.lr = learning_rate
+        self.batch_size = batch_size
+        self.train_criterion = nn.BCEWithLogitsLoss(pos_weight=train_pos_weight)
+        self.val_criterion = nn.BCEWithLogitsLoss(pos_weight=val_pos_weight)
 
         # first block
         self.conv1 = nn.Conv1d(1, 20, 19, padding=5, stride=3)
@@ -151,11 +152,11 @@ class SquiggleNetLightning(pl.LightningModule):
         
 
         layers = []
-        layers.append(self._make_layer(block, channels=20, blocks=config['num_blocks']))
+        layers.append(self._make_layer(block, channels=20, blocks=num_blocks))
         channels = 20
-        for i in range(1, config['num_layers']):
+        for i in range(1, num_layers):
             channels = int(float(channels) * 1.5)
-            layers.append(self._make_layer(block, channels, blocks=config['num_blocks'], stride=2))
+            layers.append(self._make_layer(block, channels, blocks=num_blocks, stride=2))
 
         self.hidden_layers = nn.Sequential(*layers)
         # Note JUU 17/10/2023 
@@ -240,6 +241,7 @@ class SquiggleNetLightning(pl.LightningModule):
         self.log('val_bal_acc', val_acc, batch_size=self.batch_size)
         self.eval_loss.append(val_loss)
         self.eval_accuracy.append(val_acc)
+        #return val_loss
         return {"val_loss": val_loss, "val_bal_acc": val_acc}
 
     def on_validation_epoch_end(self):

@@ -16,13 +16,16 @@ from sklearn.metrics import accuracy_score, balanced_accuracy_score, confusion_m
 from torch import nn
 from tqdm import tqdm
 from pytorch_lightning.callbacks import EarlyStopping, DeviceStatsMonitor, ModelSummary, ModelCheckpoint
-from ray.tune.integration.pytorch_lightning import TuneReportCallback
-from ray.train.lightning import RayDDPStrategy, RayFSDPStrategy, RayLightningEnvironment, RayTrainReportCallback, prepare_trainer
-from ray import tune
-from ray.tune.schedulers import ASHAScheduler
-from ray.train import RunConfig, ScalingConfig, CheckpointConfig
-from ray.train.torch import TorchTrainer
-from functools import partial
+#from ray.tune.integration.pytorch_lightning import TuneReportCallback
+#from ray.train.lightning import RayDDPStrategy, RayFSDPStrategy, RayLightningEnvironment, RayTrainReportCallback, prepare_trainer
+#from ray import tune
+#from ray.tune.schedulers import ASHAScheduler
+#from ray.train import RunConfig, ScalingConfig, CheckpointConfig
+#from ray.train.torch import TorchTrainer
+#from functools import partial
+from skorch import NeuralNetBinaryClassifier
+from sklearn.model_selection import GridSearchCV
+
 
 PLASMID_LABEL = 0
 CHR_LABEL = 1
@@ -85,29 +88,62 @@ def main(p_train, p_val, p_ids, chr_train, chr_val, chr_ids, out_folder,
 
     val_pos_weight = torch.as_tensor(validation_generator.get_class_counts()[1] / (validation_generator.get_class_counts()[0] + 1e-5), dtype=torch.float)
 
-    config = {
-        'learning_rate': tune.loguniform(1e-3, 1e-1),
-        'batch_size' : tune.choice([32, 64, 100]),
-        'train_pos_weight' : train_pos_weight,
-        'val_pos_weight' : val_pos_weight,
-        'num_blocks' : tune.choice([2, 3, 4]),
-        'num_layers' : tune.choice([4, 5, 6, 7]),
-    }
+#    config = {
+#        'learning_rate': tune.loguniform(1e-3, 1e-1),
+#        'batch_size' : tune.choice([32, 64, 100]),
+#        'train_pos_weight' : train_pos_weight,
+#        'val_pos_weight' : val_pos_weight,
+#        'num_blocks' : tune.choice([2, 3, 4]),
+#        'num_layers' : tune.choice([4, 5, 6, 7]),
+#    }
 
-    if train_model  == 'DeepSelectNet':
-        config['dropout'] = tune.choice[0.01, 0.05, 0.1, 0.2, 0.25]
+
+    model = NeuralNetBinaryClassifier(
+        SquiggleNetLightning,
+        criterion=nn.BCEWithLogitsLoss,
+        optimizer=torch.optim.AdamW,
+        max_epochs=20,
+        verbose=True
+    )
+
+    # define the grid search parameters
+    param_grid = {
+        'batch_size' : [32, 64, 100],
+        'optimizer__lr': [0.001], #, 0.01, 0.1],
+        'module__train_pos_weight': [train_pos_weight],
+        'module__val_pos_weight' : [val_pos_weight],
+        'module__num_blocks' : [2], #[2, 3, 4],
+        'module__num_layers' : [4], # 5, 6, 7],
+    }
+    grid = GridSearchCV(estimator=model, param_grid=param_grid, n_jobs=4, cv=3)
+
+    # align the training data in chr_train_1 before starting to infer hyperparameters
+    for i, (train_data, train_labels, _) in tqdm(enumerate(training_generator), desc='train-batch'):
+        train_data, train_labels = train_data.to(device), train_labels.to(torch.float).to(device)
+        output = grid.fit(train_data, train_labels)
+
+ 
+    # summarize results
+    print("Best: %f using %s" % (grid.best_score_, grid.best_params_))
+    means = grid.cv_results_['mean_test_score']
+    stds = grid.cv_results_['std_test_score']
+    params = grid.cv_results_['params']
+    for mean, stdev, param in zip(means, stds, params):
+        print("%f (%f) with: %r" % (mean, stdev, param))
+#    if train_model  == 'DeepSelectNet':
+#        config['dropout'] = tune.choice[0.01, 0.05, 0.1, 0.2, 0.25]
 
 
     # Define a TorchTrainer without hyper-parameters for Tuner
-    train_config = {
-        'train_model' : train_model,
-        'train_gen' : training_generator,
-        'val_gen' : validation_generator,
-        'out_folder' : out_folder,
-        'model_config' : config,
-    }
+#    train_config = {
+#        'train_model' : train_model,
+#        'train_gen' : training_generator,
+#        'val_gen' : validation_generator,
+#        'out_folder' : out_folder,
+#        'model_config' : config,
+#    }
 
-    results = _tune_models(train_config, n_workers)
+#    results = _tune_models(train_config, n_workers)
 
     #tune.run(
     #    partial(_train_tune, epochs=10, gpus=0),
@@ -115,84 +151,84 @@ def main(p_train, p_val, p_ids, chr_train, chr_val, chr_ids, out_folder,
     #    num_samples=10
     #    )
 
-def _train_tune(config, epochs=10, gpus=0):
-    if config['train_model'] == 'SquiggleNet':
-        model = SquiggleNetLightning(Bottleneck, config['model_config'])
+#def _train_tune(config, epochs=10, gpus=0):
+#    if config['train_model'] == 'SquiggleNet':
+#        model = SquiggleNetLightning(Bottleneck, config['model_config'])
     
-    callback = TuneReportCallback(
-    {
-        "loss": "val_loss",
-        "mean_accuracy": "val_accuracy"
-    },
-    on="validation_end")
-    trainer = pl.Trainer(
-        max_epochs=epochs,
-        callbacks=[callback])
-    trainer.fit(model, config['train_gen'], config['val_gen'])
+#    callback = TuneReportCallback(
+#    {
+#        "loss": "val_loss",
+#        "mean_accuracy": "val_accuracy"
+#    },
+#    on="validation_end")
+#    trainer = pl.Trainer(
+#        max_epochs=epochs,
+#        callbacks=[callback])
+#    trainer.fit(model, config['train_gen'], config['val_gen'])
 
 
-def _tune_models(train_config, n_workers):
+#def _tune_models(train_config, n_workers):
     # The maximum training epochs
-    num_epochs = 10
+#    num_epochs = 10
 
     # Number of sampls from parameter space
-    num_samples = 10
+#    num_samples = 10
 
-    scheduler = ASHAScheduler(max_t=num_epochs, grace_period=1, reduction_factor=2)
+#    scheduler = ASHAScheduler(max_t=num_epochs, grace_period=1, reduction_factor=2)
 
-    scaling_config = ScalingConfig(
+#    scaling_config = ScalingConfig(
         #num_workers=4, use_gpu=True, resources_per_worker={"CPU": 1, "GPU": 1}
-        num_workers=1, use_gpu=False, resources_per_worker={"CPU": n_workers},
-    )
+#        num_workers=1, use_gpu=False, resources_per_worker={"CPU": n_workers},
+#    )
 
-    run_config = RunConfig(
-        checkpoint_config=CheckpointConfig(
-            num_to_keep=2,
-            checkpoint_score_attribute="ptl/val_accuracy",
-            checkpoint_score_order="max",
-        ),
-    )
+#    run_config = RunConfig(
+#        checkpoint_config=CheckpointConfig(
+#            num_to_keep=2,
+#            checkpoint_score_attribute="ptl/val_accuracy",
+#            checkpoint_score_order="max",
+#        ),
+#    )
 
-    ray_trainer = TorchTrainer(
-        _train_func,
-        scaling_config=scaling_config,
-        run_config=run_config,
-    )
+#    ray_trainer = TorchTrainer(
+#        _train_func,
+#        scaling_config=scaling_config,
+#        run_config=run_config,
+#    )
 
-    tuner = tune.Tuner(
-        ray_trainer,
-        param_space={"train_loop_config": train_config},
-        tune_config=tune.TuneConfig(
-            metric="ptl/val_accuracy",
-            mode="max",
-            num_samples=num_samples,
-            scheduler=scheduler,
-        ),
-    )
+#    tuner = tune.Tuner(
+#        ray_trainer,
+#        param_space={"train_loop_config": train_config},
+#        tune_config=tune.TuneConfig(
+#            metric="ptl/val_accuracy",
+#            mode="max",
+#            num_samples=num_samples,
+#            scheduler=scheduler,
+#        ),
+#    )
 
-    return tuner.fit()
+#    return tuner.fit()
 
-def _train_func(train_config):
-    if train_config['train_model'] == 'SquiggleNet':
-        model = SquiggleNetLightning(Bottleneck, train_config['model_config'])
-    elif train_config['train_model']  == 'DeepSelectNet':
-        model = DeepSelectNet(DSBottleneck, train_config['model_config'])
+#def _train_func(train_config):
+#    if train_config['train_model'] == 'SquiggleNet':
+#        model = SquiggleNetLightning(Bottleneck, train_config['model_config'])
+#    elif train_config['train_model']  == 'DeepSelectNet':
+#        model = DeepSelectNet(DSBottleneck, train_config['model_config'])
     #elif train_model == 'bnLSTM':
     #    model = bnLSTM(input_size=32, hidden_size=512, max_length=4000, learning_rate=learning_rate, batch_size=batch_size,train_pos_weight=train_pos_weight, val_pos_weight=val_pos_weight,
     #                    num_layers=1, use_bias=True, batch_first=True, dropout=0.5)
 
 
-    trainer = pl.Trainer(
-        default_root_dir=train_config['out_folder'],
-        devices="auto",
-        accelerator="auto",
-        strategy=RayDDPStrategy(),
-        callbacks=[RayTrainReportCallback()],
-        plugins=[RayLightningEnvironment()],
-        enable_progress_bar=False,
-    )
-    trainer = prepare_trainer(trainer)
-    trainer.fit(model, train_config['train_gen'], train_config['val_gen'])
+#    trainer = pl.Trainer(
+#        default_root_dir=train_config['out_folder'],
+#        devices="auto",
+#        accelerator="auto",
+#        strategy=RayDDPStrategy(),
+#        callbacks=[RayTrainReportCallback()],
+#        plugins=[RayLightningEnvironment()],
+#        enable_progress_bar=False,
+#    )
+#    trainer = prepare_trainer(trainer)
+#    trainer.fit(model, train_config['train_gen'], train_config['val_gen'])
 
 if __name__ == '__main__':
     main()
